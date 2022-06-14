@@ -1,0 +1,365 @@
+# Load Libraries ----
+
+library(baseballr)
+library(tidyverse)
+# library(ggplot2)
+options(scipen = 999)
+
+# Get Game packs ----
+## create data range to use for game pack retrieval 
+date_range <- seq(as.Date("2022-04-07"), as.Date("2022-06-07"), "days")
+
+## get all game packs from the 2022 season
+mlb_game_packs_2022 <- purrr::map_df(.x = date_range,
+                         ~baseballr::get_game_pks_mlb(date = .x, level_ids = 1))
+
+game_pk_final_2022 <- mlb_game_packs_2022 %>%
+  filter(status.detailedState == 'Final') %>%
+  pull(game_pk)
+
+# Basic Scoring Data ----
+basic_scoring_df <- mlb_game_packs_2022 %>%
+  filter(status.detailedState == 'Final') %>%
+  select(game_pk, officialDate, dayNight, description, venue.id, venue.name,
+         reverseHomeAwayStatus,teams.away.team.id, teams.away.team.name, 
+         teams.away.score, teams.away.isWinner, teams.home.team.id, 
+         teams.home.team.name, teams.home.score, teams.home.isWinner)
+
+ggplot(data = basic_scoring_df) +
+  geom_point(mapping = aes(x = officialDate, y = teams.home.score))
+
+# Training and Testing Split ----
+
+## Withhold the most recent 2 days of games for testing purposes
+testing_df <- basic_scoring_df[which(basic_scoring_df$officialDate == "2022-06-07" | basic_scoring_df$officialDate == "2022-06-06"), ]
+training_df <- basic_scoring_df[which(basic_scoring_df$officialDate != "2022-06-07" & basic_scoring_df$officialDate != "2022-06-06"), ]
+
+# Model Building - Home Score ----
+
+## Fitting Linear Regression
+
+home_score_model1 <- lm(teams.home.score ~ 0 + teams.home.team.name + teams.away.team.name
+            + dayNight, data = training_df)
+summary(home_score_model1)
+
+## Generating Predictions
+
+home_score_model1_predictions <- round(predict.lm(home_score_model1, testing_df),2)
+
+home_score_predictions_df <- testing_df %>%
+  select(game_pk, officialDate, dayNight, teams.home.team.id, teams.home.team.name,
+         teams.home.score) %>%
+  add_column(Home_Score_Predictions = home_score_model1_predictions)
+
+# Model Building - Away Score ----
+
+## Fitting Linear Regression
+
+away_score_model1 <- lm(teams.away.score ~ 0 + teams.home.team.name + teams.away.team.name
+                        + dayNight, data = training_df)
+summary(away_score_model1)
+
+## Generating Predictions
+
+away_score_model1_predictions <- round(predict.lm(away_score_model1, testing_df),2)
+
+away_score_predictions_df <- testing_df %>%
+  select(game_pk, officialDate, dayNight, teams.away.team.id, teams.away.team.name,
+         teams.away.score) %>%
+  add_column(Away_Score_Predictions = away_score_model1_predictions)
+
+
+# Creating DataFrame of Predictions and Outcomes ----
+
+final_predictions_df <- home_score_predictions_df %>%
+  add_column(teams.away.team.id = 
+               away_score_predictions_df$teams.away.team.id,
+             teams.away.team.name = 
+               away_score_predictions_df$teams.away.team.name,
+             teams.away.score = 
+               away_score_predictions_df$teams.away.score,
+             Away_Score_Predictions = 
+               away_score_predictions_df$Away_Score_Predictions)
+
+## Creating Variables for Total Runs Scored
+final_predictions_df$total.runs = 
+  final_predictions_df$teams.home.score +
+  final_predictions_df$teams.away.score
+
+final_predictions_df$projected.total.runs = 
+  final_predictions_df$Home_Score_Predictions + 
+  final_predictions_df$Away_Score_Predictions
+
+# Graphing Predictions vs. Outcomes ----
+
+## Away Team Score vs. Projected Score
+ggplot(data = final_predictions_df) +
+  geom_point(mapping = aes(x = teams.away.score, y = Away_Score_Predictions)) +
+  scale_x_continuous(limits = c(0,11)) +
+  scale_y_continuous(limits = c(0,11)) +
+  ggtitle("Away Team Score vs. Projected Score") +
+  xlab("Away Team Score") +
+  ylab("Projected Score")
+
+## Home Team Score vs. Projected Score
+ggplot(data = final_predictions_df) +
+  geom_point(mapping = aes(x = teams.home.score, y = Home_Score_Predictions)) +
+  scale_x_continuous(limits = c(0,11)) +
+  scale_y_continuous(limits = c(0,11)) +
+  ggtitle("Home Team Score vs. Projected Score") +
+  xlab("Home Team Score") +
+  ylab("Projected Score")
+
+## Total Runs vs. Projected Total Runs
+ggplot(data = final_predictions_df) +
+  geom_point(mapping = aes(x = total.runs, y = projected.total.runs)) +
+  scale_x_continuous(limits = c(0,15)) +
+  scale_y_continuous(limits = c(0,20)) +
+  ggtitle("Total Runs vs. Projected Total Runs") +
+  xlab("Total Runs") +
+  ylab("Projected Runs")
+
+# ------------------------------------------------------------------------------
+
+# Arizona Diamondbacks ----
+
+ARI_total <- basic_scoring_df %>%
+  filter(teams.away.team.id == 109 | teams.home.team.id == 109)
+
+ARI_home <- basic_scoring_df %>%
+  filter(teams.home.team.id == 109)
+
+ARI_away <- basic_scoring_df %>%
+  filter(teams.away.team.id == 109)
+
+# Atlanta Braves ----
+
+ATL_home <- basic_scoring_df %>%
+  filter(teams.home.team.id == 144)
+
+ATL_away <- basic_scoring_df %>%
+  filter(teams.away.team.id == 144)
+
+# Baltimore Orioles ----
+
+BAL_home <- basic_scoring_df %>%
+  filter(teams.home.team.id == 110)
+
+BAL_away <- basic_scoring_df %>%
+  filter(teams.away.team.id == 110)
+
+# Boston Red Sox ----
+
+BOS_home <- basic_scoring_df %>%
+  filter(teams.home.team.id == 111)
+
+BOS_away <- basic_scoring_df %>%
+  filter(teams.away.team.id == 111)
+
+# Chicago Cubs ----
+
+CHC_home <- basic_scoring_df %>%
+  filter(teams.home.team.id == 112)
+
+CHC_away <- basic_scoring_df %>%
+  filter(teams.away.team.id == 112)
+
+# Chicago White Sox ----
+
+CWS_home <- basic_scoring_df %>%
+  filter(teams.home.team.id == 145)
+
+CWS_away <- basic_scoring_df %>%
+  filter(teams.away.team.id == 145)
+
+# Cincinnati Reds ----
+
+CIN_home <- basic_scoring_df %>%
+  filter(teams.home.team.id == 113)
+
+CIN_away <- basic_scoring_df %>%
+  filter(teams.away.team.id == 113)
+
+# Cleveland Gaurdians ----
+
+CLE_home <- basic_scoring_df %>%
+  filter(teams.home.team.id == 114)
+
+CLE_away <- basic_scoring_df %>%
+  filter(teams.away.team.id == 114)
+
+# Colorado Rockies ----
+
+COL_home <- basic_scoring_df %>%
+  filter(teams.home.team.id == 115)
+
+COL_away <- basic_scoring_df %>%
+  filter(teams.away.team.id == 115)
+
+# Detroit Tigers ----
+
+DET_home <- basic_scoring_df %>%
+  filter(teams.home.team.id == 116)
+
+DET_away <- basic_scoring_df %>%
+  filter(teams.away.team.id == 116)
+
+# Houston Astros ----
+
+HOU_home <- basic_scoring_df %>%
+  filter(teams.home.team.id == 117)
+
+HOU_away <- basic_scoring_df %>%
+  filter(teams.away.team.id == 117)
+
+# Kansas City Royals ----
+
+KC_home <- basic_scoring_df %>%
+  filter(teams.home.team.id == 118)
+
+KC_away <- basic_scoring_df %>%
+  filter(teams.away.team.id == 118)
+
+# Los Angeles Angels ----
+
+LAA_home <- basic_scoring_df %>%
+  filter(teams.home.team.id == 108)
+
+LAA_away <- basic_scoring_df %>%
+  filter(teams.away.team.id == 108)
+
+# Los Angeles Dodgers ----
+
+LAD_home <- basic_scoring_df %>%
+  filter(teams.home.team.id == 119)
+
+LAD_away <- basic_scoring_df %>%
+  filter(teams.away.team.id == 119)
+
+# Miami Marlins ----
+
+MIA_home <- basic_scoring_df %>%
+  filter(teams.home.team.id == 146)
+
+MIA_away <- basic_scoring_df %>%
+  filter(teams.away.team.id == 146)
+
+# Milwaukee Brewers ----
+
+MIL_home <- basic_scoring_df %>%
+  filter(teams.home.team.id == 158)
+
+MIL_away <- basic_scoring_df %>%
+  filter(teams.away.team.id == 158)
+
+# Minnesota Twins ----
+
+MIN_home <- basic_scoring_df %>%
+  filter(teams.home.team.id == 142)
+
+MIN_away <- basic_scoring_df %>%
+  filter(teams.away.team.id == 142)
+
+# New York Mets ----
+
+NYM_home <- basic_scoring_df %>%
+  filter(teams.home.team.id == 121)
+
+NYM_away <- basic_scoring_df %>%
+  filter(teams.away.team.id == 121)
+
+# New York Yankees ----
+
+NYY_home <- basic_scoring_df %>%
+  filter(teams.home.team.id == 147)
+
+NYY_away <- basic_scoring_df %>%
+  filter(teams.away.team.id == 147)
+
+# Oakland Athletics ----
+
+OAK_home <- basic_scoring_df %>%
+  filter(teams.home.team.id == 133)
+
+OAK_away <- basic_scoring_df %>%
+  filter(teams.away.team.id == 133)
+
+# Philadelphia Phillies ----
+
+PHI_home <- basic_scoring_df %>%
+  filter(teams.home.team.id == 143)
+
+PHI_away <- basic_scoring_df %>%
+  filter(teams.away.team.id == 143)
+
+# Pittsburgh Pirates ----
+
+PIT_home <- basic_scoring_df %>%
+  filter(teams.home.team.id == 134)
+
+PIT_away <- basic_scoring_df %>%
+  filter(teams.away.team.id == 134)
+
+# San Diego Padres ----
+
+SD_home <- basic_scoring_df %>%
+  filter(teams.home.team.id == 135)
+
+SD_away <- basic_scoring_df %>%
+  filter(teams.away.team.id == 135)
+
+# San Francisco ----
+
+SF_home <- basic_scoring_df %>%
+  filter(teams.home.team.id == 137)
+
+SF_away <- basic_scoring_df %>%
+  filter(teams.away.team.id == 137)
+
+# Seattle Mariners ----
+
+SEA_home <- basic_scoring_df %>%
+  filter(teams.home.team.id == 136)
+
+SEA_away <- basic_scoring_df %>%
+  filter(teams.away.team.id == 136)
+
+# St. Louis Cardinals  ----
+
+STL_home <- basic_scoring_df %>%
+  filter(teams.home.team.id == 138)
+
+STL_away <- basic_scoring_df %>%
+  filter(teams.away.team.id == 138)
+
+# Tampa Bay Rays ----
+
+TB_home <- basic_scoring_df %>%
+  filter(teams.home.team.id == 139)
+
+TB_away <- basic_scoring_df %>%
+  filter(teams.away.team.id == 139)
+
+# Texas Rangers ----
+
+TEX_home <- basic_scoring_df %>%
+  filter(teams.home.team.id == 140)
+
+TEX_away <- basic_scoring_df %>%
+  filter(teams.away.team.id == 140)
+
+# Toronto Blue Jays ----
+
+TOR_home <- basic_scoring_df %>%
+  filter(teams.home.team.id == 141)
+
+TOR_away <- basic_scoring_df %>%
+  filter(teams.away.team.id == 141)
+
+# Washington Nationals ----
+
+WSH_home <- basic_scoring_df %>%
+  filter(teams.home.team.id == 120)
+
+WSH_away <- basic_scoring_df %>%
+  filter(teams.away.team.id == 120)
