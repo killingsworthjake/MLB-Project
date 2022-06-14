@@ -1,2 +1,7 @@
-i
 Test
+
+Updated this file to show you how pulling changes to the project should work.
+
+I also merged the master branch into the main branch so now the main branch is the HEAD which is what we wanted.
+To push the code you would use the git push origin main command
+
